@@ -1,25 +1,21 @@
-"""
-MLP 모델 정의
-"""
+# MLP 모델 정의
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+# 다층 퍼셉트론 (Multi-Layer Perceptron) 모델
+
+# input_size: 입력 차원
+# hidden_sizes: 은닉층 크기 리스트
+# num_classes: 출력 클래스 수
+# activation: 활성화 함수 ('relu', 'leaky_relu', 'sigmoid')
+# init_std: 가중치 초기화 표준편차 (None이면 기본값 사용)
+# use_batch_norm: 배치 정규화 사용 여부
+# dropout_rate: 드롭아웃 비율
+
 class MLP(nn.Module):
-    """
-    다층 퍼셉트론 (Multi-Layer Perceptron) 모델
-    
-    Args:
-        input_size: 입력 차원
-        hidden_sizes: 은닉층 크기 리스트
-        num_classes: 출력 클래스 수
-        activation: 활성화 함수 ('relu', 'leaky_relu', 'sigmoid')
-        init_std: 가중치 초기화 표준편차 (None이면 기본값 사용)
-        use_batch_norm: 배치 정규화 사용 여부
-        dropout_rate: 드롭아웃 비율
-    """
     def __init__(self, input_size, hidden_sizes=[256, 128], num_classes=10,
                  activation='relu', init_std=None, use_batch_norm=False, 
                  dropout_rate=0.0):
@@ -71,15 +67,15 @@ class MLP(nn.Module):
         else:
             self.apply(self._init_weights_default)
     
+    # 사용자 정의 가중치 초기화
     def _init_weights(self, m, std):
-        """사용자 정의 가중치 초기화"""
         if isinstance(m, nn.Linear):
             nn.init.normal_(m.weight, mean=0, std=std)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
     
+    # 기본 가중치 초기화 (He or Xavier)
     def _init_weights_default(self, m):
-        """기본 가중치 초기화 (He or Xavier)"""
         if isinstance(m, nn.Linear):
             if self.activation_name in ['relu', 'leaky_relu']:
                 # He 초기화 (ReLU 계열)
@@ -91,8 +87,8 @@ class MLP(nn.Module):
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
     
+    # 순전파
     def forward(self, x):
-        """순전파"""
         # 입력을 1D로 평탄화
         x = x.view(x.size(0), -1)
         
@@ -112,8 +108,8 @@ class MLP(nn.Module):
         x = self.output_layer(x)
         return x
     
+    # 특정 레이어의 활성화 값 반환
     def get_activations(self, x, layer_idx=None):
-        """특정 레이어의 활성화 값 반환"""
         x = x.view(x.size(0), -1)
         activations = []
         
@@ -131,20 +127,20 @@ class MLP(nn.Module):
         
         return activations if layer_idx is None else activations[0]
     
+    # 모델의 전체 파라미터 수 계산
     def count_parameters(self):
-        """모델의 전체 파라미터 수 계산"""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
+    # 각 레이어의 가중치 반환
     def get_layer_weights(self):
-        """각 레이어의 가중치 반환"""
         weights = []
         for layer in self.layers:
             weights.append(layer.weight.detach().cpu().numpy())
         weights.append(self.output_layer.weight.detach().cpu().numpy())
         return weights
     
+    # 각 레이어의 그래디언트 반환
     def get_layer_gradients(self):
-        """각 레이어의 그래디언트 반환"""
         gradients = []
         for layer in self.layers:
             if layer.weight.grad is not None:
@@ -153,9 +149,8 @@ class MLP(nn.Module):
             gradients.append(self.output_layer.weight.grad.detach().cpu().numpy())
         return gradients
 
-
+# Skip Connection이 있는 MLP (추가 실험용)
 class MLPWithSkipConnection(MLP):
-    """Skip Connection이 있는 MLP (추가 실험용)"""
     def __init__(self, input_size, hidden_sizes=[256, 128], num_classes=10,
                  activation='relu', init_std=None):
         super().__init__(input_size, hidden_sizes, num_classes, activation, init_std)
@@ -188,9 +183,8 @@ class MLPWithSkipConnection(MLP):
         x = self.output_layer(x)
         return x
 
-
+# 모델 생성 팩토리 함수
 def create_model(model_type='standard', **kwargs):
-    """모델 생성 팩토리 함수"""
     if model_type == 'standard':
         return MLP(**kwargs)
     elif model_type == 'skip':

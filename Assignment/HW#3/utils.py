@@ -1,6 +1,4 @@
-"""
-유틸리티 함수들
-"""
+# 유틸리티 함수들
 
 import torch
 import torch.nn as nn
@@ -23,30 +21,34 @@ import pandas as pd
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
 
+# 결과 저장 디렉토리 생성
 def create_results_directory():
-    """결과 저장 디렉토리 생성"""
+    # results 폴더가 없으면 생성
+    if not os.path.exists("results"):
+        os.makedirs("results")
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = f"results_{timestamp}"
+    results_dir = os.path.join("results", f"results_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(os.path.join(results_dir, "plots"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "models"), exist_ok=True)
     os.makedirs(os.path.join(results_dir, "analysis"), exist_ok=True)
     return results_dir
 
+# 결과를 pickle 파일로 저장
 def save_results(results, filename):
-    """결과를 pickle 파일로 저장"""
     with open(filename, 'wb') as f:
         pickle.dump(results, f)
     print(f"Results saved to {filename}")
 
+# pickle 파일에서 결과 로드
 def load_results(filename):
-    """pickle 파일에서 결과 로드"""
     with open(filename, 'rb') as f:
         results = pickle.load(f)
     return results
 
+# 모델 저장
 def save_model(model, filepath):
-    """모델 저장"""
     torch.save({
         'model_state_dict': model.state_dict(),
         'model_config': {
@@ -57,17 +59,16 @@ def save_model(model, filepath):
         }
     }, filepath)
 
+# 모델 로드
 def load_model(model_class, filepath, device):
-    """모델 로드"""
     checkpoint = torch.load(filepath, map_location=device)
     config = checkpoint['model_config']
     model = model_class(**config)
     model.load_state_dict(checkpoint['model_state_dict'])
     return model.to(device)
 
-# 데이터 로더 함수들
-def get_fashion_mnist_loaders(batch_size=128, validation_split=0.1):
-    """Fashion-MNIST 데이터 로더"""
+# Fashion-MNIST 데이터 로더
+def get_fashion_mnist_loaders(batch_size=128, validation_split=0.0):
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
@@ -81,25 +82,28 @@ def get_fashion_mnist_loaders(batch_size=128, validation_split=0.1):
         root='./data', train=False, download=True, transform=transform
     )
     
+    # num_workers를 0으로 설정 (Windows에서 멀티프로세싱 문제 방지)
+    num_workers = 0
+    
     # Validation set 분리
     if validation_split > 0:
         val_size = int(len(train_dataset) * validation_split)
         train_size = len(train_dataset) - val_size
         train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
         
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
         
         return train_loader, val_loader, test_loader, 784, 10
     else:
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
         
         return train_loader, test_loader, 784, 10
 
+# Scikit-learn 2D 데이터셋 로더
 def get_sklearn_data_loaders(dataset_type='moons', n_samples=1000, batch_size=32, noise=0.2):
-    """Scikit-learn 2D 데이터셋 로더"""
     if dataset_type == 'moons':
         X, y = make_moons(n_samples=n_samples, noise=noise, random_state=42)
     elif dataset_type == 'circles':
@@ -136,30 +140,25 @@ def get_sklearn_data_loaders(dataset_type='moons', n_samples=1000, batch_size=32
     return train_loader, test_loader, 2, 2
 
 # 학습 함수
+
+# model: 학습할 모델
+# train_loader: 학습 데이터 로더
+# test_loader: 테스트 데이터 로더
+# loss_fn: 손실 함수
+# optimizer: 옵티마이저
+# epochs: 학습 에폭 수
+# scheduler: 학습률 스케줄러
+# device: 학습 디바이스
+# use_softmax_mse: MSE loss 사용 시 softmax 적용 여부
+# verbose: 학습 과정 출력 여부
+# log_interval: 로그 출력 간격
+# train_losses: 에폭별 학습 손실
+# test_accuracies: 에폭별 테스트 정확도
+# train_accuracies: 에폭별 학습 정확도
+
 def train_model(model, train_loader, test_loader, loss_fn, optimizer, 
                 epochs=30, scheduler=None, device='cpu', use_softmax_mse=False,
                 verbose=True, log_interval=5):
-    """
-    모델 학습 함수
-    
-    Args:
-        model: 학습할 모델
-        train_loader: 학습 데이터 로더
-        test_loader: 테스트 데이터 로더
-        loss_fn: 손실 함수
-        optimizer: 옵티마이저
-        epochs: 학습 에폭 수
-        scheduler: 학습률 스케줄러
-        device: 학습 디바이스
-        use_softmax_mse: MSE loss 사용 시 softmax 적용 여부
-        verbose: 학습 과정 출력 여부
-        log_interval: 로그 출력 간격
-    
-    Returns:
-        train_losses: 에폭별 학습 손실
-        test_accuracies: 에폭별 테스트 정확도
-        train_accuracies: 에폭별 학습 정확도
-    """
     model.to(device)
     
     train_losses = []
@@ -240,10 +239,9 @@ def train_model(model, train_loader, test_loader, loss_fn, optimizer,
     
     return train_losses, test_accuracies, train_accuracies
 
-# 시각화 함수들
+# 학습 곡선 시각화
 def plot_learning_curves(train_losses, test_accuracies, train_accuracies=None,
                         title="Learning Curves", save_path=None):
-    """학습 곡선 시각화"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     
     # Loss 곡선
@@ -272,8 +270,8 @@ def plot_learning_curves(train_losses, test_accuracies, train_accuracies=None,
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
+# 여러 실험 결과 비교 플롯
 def plot_comparison(results_dict, metric='accuracy', title="Comparison", save_path=None):
-    """여러 실험 결과 비교 플롯"""
     plt.figure(figsize=(12, 6))
     
     for name, results in results_dict.items():
@@ -297,8 +295,8 @@ def plot_comparison(results_dict, metric='accuracy', title="Comparison", save_pa
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
+# 실험 결과 요약 테이블 생성
 def create_summary_table(results_dict, metrics=['final_accuracy', 'convergence_epoch', 'min_loss']):
-    """실험 결과 요약 테이블 생성"""
     summary_data = []
     
     for name, results in results_dict.items():
@@ -325,16 +323,15 @@ def create_summary_table(results_dict, metrics=['final_accuracy', 'convergence_e
     
     return pd.DataFrame(summary_data)
 
+# 요약 테이블 출력
 def print_summary_table(df, title="Summary"):
-    """요약 테이블 출력"""
     print(f"\n{title}")
     print("=" * 80)
     print(df.to_string(index=False))
     print("=" * 80)
 
-# 2D 데이터 시각화
+# 2D 데이터 결정 경계 시각화 시각화
 def plot_decision_boundary(model, X, y, title="Decision Boundary", save_path=None):
-    """2D 데이터에 대한 결정 경계 시각화"""
     device = next(model.parameters()).device
     
     # 메시그리드 생성
@@ -365,8 +362,8 @@ def plot_decision_boundary(model, X, y, title="Decision Boundary", save_path=Non
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
+# 정확도, 정밀도, 재현율, F1 점수 계산
 def calculate_metrics(outputs, targets):
-    """정확도, 정밀도, 재현율, F1 점수 계산"""
     _, predicted = torch.max(outputs, 1)
     correct = (predicted == targets).sum().item()
     total = targets.size(0)

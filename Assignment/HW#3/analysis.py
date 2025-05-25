@@ -1,6 +1,4 @@
-"""
-분석 함수들
-"""
+# 분석 함수들
 
 import torch
 import torch.nn as nn
@@ -12,44 +10,35 @@ import pandas as pd
 from scipy import stats
 import os
 
+# Dead ReLU 뉴런 분석
 def analyze_dead_relu(model, data_loader, device):
-    """
-    Dead ReLU 뉴런 분석
+    dead_neurons = {}  # dead neuron 수를 저장할 딕셔너리
+    total_activations = {}  # 총 activation 수를 저장할 딕셔너리
     
-    Args:
-        model: 분석할 모델
-        data_loader: 데이터 로더
-        device: 연산 디바이스
-    
-    Returns:
-        dead_ratios: 각 레이어별 dead neuron 비율 딕셔너리
-    """
-    dead_neurons = {}
-    total_activations = {}
-    
-    # Hook을 사용해 각 레이어의 출력 캡처
+    # Hook을 사용해 각 레이어의 출력값 저장
     activations = {}
     
     def get_activation(name):
+        # Hook 함수: 레이어의 출력을 activations 딕셔너리에 저장
         def hook(module, input, output):
             activations[name] = output.detach()
         return hook
     
-    # Hook 등록
+    # 각 레이어에 hook 등록
     hooks = []
     for i, layer in enumerate(model.layers):
         hook = layer.register_forward_hook(get_activation(f'layer_{i}'))
         hooks.append(hook)
     
-    # 데이터 통과시키며 Dead ReLU 계산
+    # 모델을 평가 모드로 전환 후 데이터를 통과시키며 dead neuron 계산
     model.eval()
     with torch.no_grad():
         for batch_idx, (inputs, _) in enumerate(data_loader):
             inputs = inputs.to(device)
             _ = model(inputs)
             
-            # 각 레이어별 Dead neuron 계산
             for name, activation in activations.items():
+                # 레이어별 초기화
                 if name not in dead_neurons:
                     dead_neurons[name] = torch.zeros(activation.size(1)).to(device)
                     total_activations[name] = 0
@@ -58,32 +47,26 @@ def analyze_dead_relu(model, data_loader, device):
                 if model.activation_name == 'relu':
                     dead_neurons[name] += (activation == 0).float().sum(dim=0)
                 elif model.activation_name == 'leaky_relu':
-                    # LeakyReLU의 경우 매우 작은 값도 체크
+                    # LeakyReLU: 작은 값도 dead로 간주
                     dead_neurons[name] += (activation.abs() < 1e-8).float().sum(dim=0)
                 
+                # 총 activation 개수 추가
                 total_activations[name] += activation.size(0)
     
-    # Hook 제거
+    # hook 제거
     for hook in hooks:
         hook.remove()
     
-    # Dead neuron 비율 계산
+    # dead neuron 비율 계산 (% 단위)
     dead_ratios = {}
     for name in dead_neurons:
         dead_ratios[name] = ((dead_neurons[name] / total_activations[name]).cpu().numpy() * 100)
     
     return dead_ratios
 
-
+# Dead neuron 히트맵 시각화
 def visualize_dead_neurons(dead_ratios, save_path=None):
-    """
-    Dead neuron 히트맵 시각화
-    
-    Args:
-        dead_ratios: 레이어별 dead neuron 비율
-        save_path: 저장 경로
-    """
-    # 데이터 준비
+    # 각 레이어별 dead neuron 비율을 리스트로 정리
     data = []
     layer_names = []
     max_neurons = 0
@@ -93,7 +76,7 @@ def visualize_dead_neurons(dead_ratios, save_path=None):
         layer_names.append(layer_name.replace('_', ' ').title())
         max_neurons = max(max_neurons, len(ratios))
     
-    # 패딩 (레이어마다 뉴런 수가 다를 수 있음)
+    # 레이어마다 뉴런 수가 다를 수 있어 NaN으로 패딩
     padded_data = []
     for layer_data in data:
         if len(layer_data) < max_neurons:
@@ -108,10 +91,10 @@ def visualize_dead_neurons(dead_ratios, save_path=None):
     # 히트맵 그리기
     plt.figure(figsize=(14, 6))
     
-    # 마스크 생성 (NaN 값 처리)
+    # NaN은 마스크 처리
     mask = np.isnan(data)
     
-    # 히트맵
+    # seaborn 히트맵
     ax = sns.heatmap(data, 
                      mask=mask,
                      cmap='Reds', 
@@ -121,7 +104,7 @@ def visualize_dead_neurons(dead_ratios, save_path=None):
                      yticklabels=layer_names,
                      xticklabels=False)
     
-    # 각 레이어의 평균 dead ratio 표시
+    # 각 레이어의 평균 dead neuron 비율 표시
     for i, layer_name in enumerate(layer_names):
         layer_data = data[i][~np.isnan(data[i])]
         mean_ratio = np.mean(layer_data)
@@ -143,26 +126,16 @@ def visualize_dead_neurons(dead_ratios, save_path=None):
     
     plt.tight_layout()
     
+    # 저장 옵션
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
-
+# Gradient 흐름 분석
 def analyze_gradient_flow(model, data_loader, device):
-    """
-    Gradient 흐름 분석
+    model.train()  # 학습 모드 설정
     
-    Args:
-        model: 분석할 모델
-        data_loader: 데이터 로더
-        device: 연산 디바이스
-    
-    Returns:
-        gradient_stats: 레이어별 gradient 통계
-    """
-    model.train()
-    
-    # 한 배치만 사용
+    # 한 배치만 사용 (계산량 최소화)
     inputs, targets = next(iter(data_loader))
     inputs, targets = inputs.to(device), targets.to(device)
     
@@ -170,11 +143,11 @@ def analyze_gradient_flow(model, data_loader, device):
     outputs = model(inputs)
     loss = nn.CrossEntropyLoss()(outputs, targets)
     
-    # Backward pass
+    # Backward pass (gradient 계산)
     model.zero_grad()
     loss.backward()
     
-    # Gradient 수집
+    # gradient 통계 수집
     gradient_stats = {}
     
     for name, param in model.named_parameters():
@@ -190,18 +163,11 @@ def analyze_gradient_flow(model, data_loader, device):
     
     return gradient_stats
 
-
+# Gradient flow 시각화
 def visualize_gradient_flow(gradient_stats, save_path=None):
-    """
-    Gradient flow 시각화
-    
-    Args:
-        gradient_stats: 레이어별 gradient 통계
-        save_path: 저장 경로
-    """
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    # 레이어 이름과 통계 추출
+    # 레이어별 이름과 gradient 통계 추출
     layer_names = []
     means = []
     stds = []
@@ -215,21 +181,21 @@ def visualize_gradient_flow(gradient_stats, save_path=None):
     
     x = np.arange(len(layer_names))
     
-    # Gradient magnitude
+    # 평균 gradient magnitude + 표준편차 시각화
     ax1.bar(x, means, yerr=stds, capsize=5, alpha=0.7)
     ax1.set_ylabel('Average Gradient Magnitude', fontsize=12)
     ax1.set_title('Gradient Flow Through Network', fontsize=14)
     ax1.set_xticks(x)
     ax1.set_xticklabels(layer_names, rotation=45, ha='right')
-    ax1.set_yscale('log')
+    ax1.set_yscale('log')  # gradient 크기 분포를 더 잘 보여주기 위해 로그 스케일 사용
     ax1.grid(True, alpha=0.3)
     
-    # Gradient가 작은 레이어 강조
+    # gradient가 매우 작은 레이어 강조
     for i, mean in enumerate(means):
         if mean < 1e-5:
             ax1.bar(i, mean, color='red', alpha=0.8)
     
-    # Zero gradients ratio
+    # Zero gradient 비율 시각화
     ax2.bar(x, zeros_ratios, alpha=0.7, color='orange')
     ax2.set_ylabel('Zero Gradients (%)', fontsize=12)
     ax2.set_xlabel('Layer', fontsize=12)
@@ -240,48 +206,37 @@ def visualize_gradient_flow(gradient_stats, save_path=None):
     
     plt.tight_layout()
     
+    # 파일 저장 옵션
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
-
+# 활성화 값 분포 시각화
 def visualize_activation_distribution(model, data_loader, device, layer_idx=0, save_path=None):
-    """
-    활성화 값 분포 시각화
-    
-    Args:
-        model: 분석할 모델
-        data_loader: 데이터 로더
-        device: 연산 디바이스
-        layer_idx: 분석할 레이어 인덱스
-        save_path: 저장 경로
-    
-    Returns:
-        activation_stats: 활성화 값 통계
-    """
-    activations = []
+    activations = []  # 활성화 값 저장
     
     def hook(module, input, output):
         activations.append(output.detach().cpu().numpy())
     
-    # Hook 등록
+    # Hook 등록 (지정한 레이어만)
     if layer_idx < len(model.layers):
         handle = model.layers[layer_idx].register_forward_hook(hook)
     else:
         print(f"Warning: layer_idx {layer_idx} out of range")
         return None
     
+    # 모델 평가 모드로 전환 후 10 배치만 분석
     model.eval()
     with torch.no_grad():
         for inputs, _ in data_loader:
             inputs = inputs.to(device)
             _ = model(inputs)
-            if len(activations) >= 10:  # 10 배치만 분석
+            if len(activations) >= 10:
                 break
     
     handle.remove()
     
-    # 활성화 값 수집
+    # 활성화 값 전처리
     act_values = np.concatenate(activations).flatten()
     
     # 통계 계산
@@ -294,10 +249,9 @@ def visualize_activation_distribution(model, data_loader, device, layer_idx=0, s
         'negative_ratio': np.sum(act_values < 0) / len(act_values) * 100
     }
     
-    # 시각화
+    # 히스토그램 및 Box plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     
-    # 히스토그램
     ax1.hist(act_values, bins=50, alpha=0.7, edgecolor='black', density=True)
     ax1.axvline(x=0, color='red', linestyle='--', alpha=0.5, label='Zero')
     ax1.axvline(x=activation_stats['mean'], color='green', linestyle='--', 
@@ -308,13 +262,11 @@ def visualize_activation_distribution(model, data_loader, device, layer_idx=0, s
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Box plot
     ax2.boxplot(act_values, vert=True)
     ax2.set_ylabel('Activation Value', fontsize=12)
     ax2.set_title(f'Activation Range - Layer {layer_idx + 1}', fontsize=14)
     ax2.grid(True, alpha=0.3)
     
-    # 통계 정보 추가
     stats_text = f"Mean: {activation_stats['mean']:.3f}\n"
     stats_text += f"Std: {activation_stats['std']:.3f}\n"
     stats_text += f"Min: {activation_stats['min']:.3f}\n"
@@ -333,15 +285,8 @@ def visualize_activation_distribution(model, data_loader, device, layer_idx=0, s
     
     return activation_stats
 
-
+# 가중치 분포 분석
 def analyze_weight_distribution(model, save_path=None):
-    """
-    가중치 분포 분석
-    
-    Args:
-        model: 분석할 모델
-        save_path: 저장 경로
-    """
     weights = model.get_layer_weights()
     
     fig, axes = plt.subplots(1, len(weights), figsize=(5 * len(weights), 5))
@@ -351,12 +296,10 @@ def analyze_weight_distribution(model, save_path=None):
     for i, (w, ax) in enumerate(zip(weights, axes)):
         w_flat = w.flatten()
         
-        # 히스토그램
         ax.hist(w_flat, bins=50, alpha=0.7, edgecolor='black', density=True)
         ax.axvline(x=0, color='red', linestyle='--', alpha=0.5)
         ax.axvline(x=np.mean(w_flat), color='green', linestyle='--', alpha=0.5)
         
-        # 정규분포 피팅
         mu, std = stats.norm.fit(w_flat)
         xmin, xmax = ax.get_xlim()
         x = np.linspace(xmin, xmax, 100)
@@ -376,16 +319,8 @@ def analyze_weight_distribution(model, save_path=None):
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
-
+# 모델들의 수렴 속도 비교
 def compare_models_convergence(results_dict, threshold=90, save_path=None):
-    """
-    모델들의 수렴 속도 비교
-    
-    Args:
-        results_dict: 실험 결과 딕셔너리
-        threshold: 수렴 기준 정확도
-        save_path: 저장 경로
-    """
     fig, ax = plt.subplots(figsize=(12, 6))
     
     convergence_data = []
@@ -393,7 +328,6 @@ def compare_models_convergence(results_dict, threshold=90, save_path=None):
     for name, results in results_dict.items():
         accs = results.get('test_accuracies', results.get('accuracies', []))
         
-        # 수렴 에폭 찾기
         conv_epoch = next((i+1 for i, acc in enumerate(accs) if acc >= threshold), None)
         
         if conv_epoch:
@@ -403,13 +337,11 @@ def compare_models_convergence(results_dict, threshold=90, save_path=None):
                 'Final Accuracy': accs[-1]
             })
             
-            # 수렴 시점까지의 곡선 그리기
-            epochs = range(1, conv_epoch + 6)  # 수렴 후 5 에폭 더 표시
+            epochs = range(1, conv_epoch + 6)
             plot_epochs = min(len(epochs), len(accs))
             ax.plot(epochs[:plot_epochs], accs[:plot_epochs], 
                    marker='o', markersize=4, linewidth=2, label=name)
             
-            # 수렴 시점 표시
             ax.scatter([conv_epoch], [accs[conv_epoch-1]], s=100, 
                       marker='*', edgecolors='black', linewidth=2)
     
@@ -427,7 +359,6 @@ def compare_models_convergence(results_dict, threshold=90, save_path=None):
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     
-    # 수렴 데이터 테이블
     if convergence_data:
         df = pd.DataFrame(convergence_data)
         print("\nConvergence Analysis:")
@@ -435,15 +366,8 @@ def compare_models_convergence(results_dict, threshold=90, save_path=None):
     
     return convergence_data
 
-
+# 전체 실험 보고서 생성
 def generate_experiment_report(all_results, results_dir):
-    """
-    전체 실험 보고서 생성
-    
-    Args:
-        all_results: 모든 실험 결과
-        results_dir: 결과 저장 디렉토리
-    """
     report_path = os.path.join(results_dir, "analysis", "experiment_report.txt")
     
     with open(report_path, 'w', encoding='utf-8') as f:
@@ -494,7 +418,6 @@ def generate_experiment_report(all_results, results_dir):
             
             f.write("\n### 스케줄러 효과 분석:\n")
             
-            # 최고 성능 찾기
             best_acc = 0
             best_config = ""
             
@@ -521,15 +444,8 @@ def generate_experiment_report(all_results, results_dir):
     
     print(f"\n분석 보고서가 {report_path}에 저장되었습니다.")
 
-
+# 모든 실험 결과 종합 시각화
 def plot_all_experiments_summary(all_results, results_dir):
-    """
-    모든 실험 결과 종합 시각화
-    
-    Args:
-        all_results: 모든 실험 결과
-        results_dir: 결과 저장 디렉토리
-    """
     fig = plt.figure(figsize=(20, 12))
     
     # 실험 A 요약
@@ -677,43 +593,32 @@ def plot_all_experiments_summary(all_results, results_dir):
                 dpi=300, bbox_inches='tight')
     plt.show()
 
-
+# 학습 동역학 분석 (수렴 속도, 진동, 정체 구간 등)
 def analyze_learning_dynamics(train_losses, test_accuracies, window_size=5):
-    """
-    학습 동역학 분석 (수렴 속도, 진동, 정체 구간 등)
-    
-    Args:
-        train_losses: 학습 손실 리스트
-        test_accuracies: 테스트 정확도 리스트
-        window_size: 이동 평균 윈도우 크기
-    
-    Returns:
-        dynamics: 학습 동역학 분석 결과
-    """
     dynamics = {}
     
-    # 수렴 속도 (90% 정확도 도달 시간)
+    # 수렴 속도: 90% 정확도 달성 에폭
     dynamics['convergence_epoch'] = next(
         (i+1 for i, acc in enumerate(test_accuracies) if acc > 90), 
         len(test_accuracies)
     )
     
-    # 손실 감소율
+    # 손실 감소율 (감소 구간만 평균)
     loss_gradients = np.gradient(train_losses)
     dynamics['avg_loss_decrease_rate'] = np.mean(loss_gradients[loss_gradients < 0])
     
-    # 정확도 증가율
+    # 정확도 증가율 (증가 구간만 평균)
     acc_gradients = np.gradient(test_accuracies)
     dynamics['avg_accuracy_increase_rate'] = np.mean(acc_gradients[acc_gradients > 0])
     
-    # 진동 정도 (표준편차로 측정)
+    # 손실 진동 정도 (이동평균과의 표준편차)
     if len(train_losses) > window_size:
         loss_ma = np.convolve(train_losses, np.ones(window_size)/window_size, mode='valid')
         dynamics['loss_oscillation'] = np.std(np.array(train_losses[window_size-1:]) - loss_ma)
     else:
         dynamics['loss_oscillation'] = np.std(train_losses)
     
-    # 정체 구간 찾기
+    # 정체 구간 찾기 (정확도 변화량이 작은 구간)
     stagnant_epochs = []
     for i in range(len(test_accuracies) - window_size):
         window = test_accuracies[i:i+window_size]
